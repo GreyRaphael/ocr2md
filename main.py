@@ -50,7 +50,7 @@ def process_document(image_path: str, server_url: str, model_name: str, ignore_l
     start = time.time()
     image_stem = Path(image_path).stem
 
-    output_dir = Path("./output_rapid2")
+    output_dir = Path(f"output_{image_stem}")
     imgs_dir = output_dir / "imgs"
     imgs_dir.mkdir(parents=True, exist_ok=True)
 
