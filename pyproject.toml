@@ -1,9 +1,15 @@
 [project]
 name = "test-paddle"
 version = "0.1.0"
-description = "Add your description here"
+description = "Lightweight OCR: PP-DocLayoutV3 + llama-cpp-server PaddleOCR"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "paddleocr>=3.7.0",
+    "httpx[socks]>=0.28.1",
+    "nopaddle[onnx]>=0.1.0",
+    "pymupdf>=1.24",
+    "rapid-layout>=1.2.1",
+    "paddleocr[doc-parser]>=3.7.0",
+    "paddlepaddle>=3.3.1",
+    "paddlex[ocr]>=3.7.2",
 ]
