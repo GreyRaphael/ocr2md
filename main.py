@@ -141,7 +141,7 @@ class OCR2MDProcessor:
                 continue
 
             # 提取图表并保存
-            if label in ["chart", "figure"]:
+            if label in ["chart", "image"]:
                 chart_counter += 1
                 img_name = f"{image_stem}_{label}_{chart_counter}.jpg"
                 img_save_path = self.imgs_dir / img_name
