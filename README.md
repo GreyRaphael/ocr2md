@@ -30,6 +30,7 @@ You can override the target Vision-Language Model server details via CLI paramet
 ```bash
 uv run main.py input/example.pdf \
     --server-url http://172.31.80.1:8080/v1 \
+    --api-key sk-xxxxxx \
     --model-name PaddleOCR-Q4_K_M
 ```
 

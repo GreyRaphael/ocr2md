@@ -3,7 +3,6 @@ import time
 import argparse
 import logging
 from pathlib import Path
-from typing import List
 from functools import lru_cache
 
 import cv2
@@ -30,7 +29,7 @@ class OCR2MDProcessor:
     轻量级 OCR 转 Markdown 处理器。
     结合了 PP-DocLayoutV3 的本地极速版面分析与远端大模型 (如 llama.cpp) 的并发 OCR 能力。
     """
-
+    
     # 针对不同排版元素的专用提示词映射
     PROMPT_MAPPING = {
         "text": "OCR:",
@@ -43,25 +42,26 @@ class OCR2MDProcessor:
         "seal": "Seal Recognition:",
     }
 
-    def __init__(self, input_path: str, server_url: str, model_name: str, ignore_labels: List[str]):
+    def __init__(self, input_path: str, server_url: str, model_name: str, ignore_labels: list[str], api_key: str = None):
         """初始化处理器，绑定所有上下文状态"""
         self.input_path = input_path
         self.server_url = server_url
         self.model_name = model_name
         self.ignore_labels = ignore_labels
-
+        self.api_key = api_key
+        
         # 路径与目录初始化
         self.path_obj = Path(input_path)
         self.base_stem = self.path_obj.stem
         self.output_dir = Path(f"output_{self.base_stem}")
         self.imgs_dir = self.output_dir / "imgs"
-
+        
         # 提前检查文件是否存在以避免生成空目录
         if not self.path_obj.exists() or not self.path_obj.is_file():
             raise FileNotFoundError(f"输入文件不存在或非文件: {input_path}")
-
+            
         self.imgs_dir.mkdir(parents=True, exist_ok=True)
-
+        
         # 初始化日志和版面分析模型
         self.logger = self._setup_logger()
         self.layout_engine = get_layout_engine()
@@ -69,7 +69,7 @@ class OCR2MDProcessor:
     def _setup_logger(self) -> logging.Logger:
         """配置双路输出日志 (控制台 + 文件)"""
         log_file = self.output_dir / "ocr2md.log"
-        logger = logging.getLogger("ocr2md")
+        logger = logging.getLogger(self.base_stem)
         logger.setLevel(logging.INFO)
         logger.handlers.clear()
 
@@ -122,7 +122,7 @@ class OCR2MDProcessor:
             "top_k": 1,
         }
 
-    def _process_page(self, img_cv: np.ndarray, image_stem: str, global_start: float = None, current_page_idx: int = None):
+    def _process_page(self, img_cv: np.ndarray, image_stem: str, client: niquests.Session, global_start: float = None, current_page_idx: int = None):
         """处理单一页面：版面分析 -> 切割图表保存 -> 并发 OCR 识别 -> 生成 Markdown"""
         page_start = time.time()
 
@@ -135,32 +135,35 @@ class OCR2MDProcessor:
         items_to_process = []
         chart_counter = 0
 
-        # 2. 启用多路复用会话，并发抛出所有网络 IO 请求
-        with niquests.Session(multiplexed=True) as client:
-            client.trust_env = False
-            for box, label, _ in zip(results.boxes, results.class_names, results.scores):
-                if label in self.ignore_labels:
-                    continue
+        # 2. 利用传入的复用 Session，并发抛出所有网络 IO 请求
+        for box, label, _ in zip(results.boxes, results.class_names, results.scores):
+            if label in self.ignore_labels:
+                continue
 
-                # 提取图表并保存
-                if label in ["chart", "figure"]:
-                    chart_counter += 1
-                    img_name = f"{image_stem}_{label}_{chart_counter}.jpg"
-                    img_save_path = self.imgs_dir / img_name
+            # 提取图表并保存
+            if label in ["chart", "figure"]:
+                chart_counter += 1
+                img_name = f"{image_stem}_{label}_{chart_counter}.jpg"
+                img_save_path = self.imgs_dir / img_name
 
-                    self._save_crop_image(img_cv, box, img_save_path)
-                    items_to_process.append(("chart", f"![{label}](imgs/{img_name})"))
-                    self.logger.info(f"已成功提取图表并保存至: {img_save_path}")
-                    continue
+                self._save_crop_image(img_cv, box, img_save_path)
+                items_to_process.append(("chart", f"![{label}](imgs/{img_name})"))
+                self.logger.info(f"已成功提取图表并保存至: {img_save_path}")
+                continue
 
-                # 其他文本/表格/公式区块，并发丢给大模型
-                payload = self._build_vlm_payload(img_cv, box, label)
-                # multiplexed=True 时 post 不阻塞，立即返回 Lazy Response
-                response = client.post(f"{self.server_url}/chat/completions", json=payload, timeout=120.0)
-                items_to_process.append(("vlm", label, response))
+            # 其他文本/表格/公式区块，并发丢给大模型
+            payload = self._build_vlm_payload(img_cv, box, label)
+            
+            headers = {}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
 
-            # 阻塞统一等待这页的并发请求全部结束
-            client.gather()
+            # multiplexed=True 时 post 不阻塞，立即返回 Lazy Response
+            response = client.post(f"{self.server_url}/chat/completions", headers=headers, json=payload, timeout=120.0)
+            items_to_process.append(("vlm", label, response))
+
+        # 阻塞统一等待这页的并发请求全部结束
+        client.gather()
 
         # 3. 按原始版面顺序组合 Markdown
         markdown_chunks = []
@@ -203,45 +206,49 @@ class OCR2MDProcessor:
         start = time.time()
         page_stems = []
 
-        # 处理 PDF 文件 (懒加载，不占用过多内存)
-        if self.path_obj.suffix.lower() == ".pdf":
-            try:
-                import fitz
-            except ImportError:
-                self.logger.error("处理 PDF 需要安装 pymupdf: uv add pymupdf")
-                return
+        # 核心优化：在整个文档处理生命周期内复用同一个 HTTP/2 Session，避免跨页 TLS 握手开销
+        with niquests.Session(multiplexed=True) as client:
+            client.trust_env = False
 
-            self.logger.info("正在逐页加载并处理 PDF (节约内存)...")
-            try:
-                doc = fitz.open(self.input_path)
-                for i in range(len(doc)):
-                    page = doc[i]
-                    # 强制 alpha=False，直接抛弃透明通道，提升性能
-                    pix = page.get_pixmap(alpha=False)
-                    img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.h, pix.w, pix.n)
+            # 处理 PDF 文件 (懒加载，不占用过多内存)
+            if self.path_obj.suffix.lower() == ".pdf":
+                try:
+                    import fitz
+                except ImportError:
+                    self.logger.error("处理 PDF 需要安装 pymupdf: uv add pymupdf")
+                    return
+                    
+                self.logger.info("正在逐页加载并处理 PDF (节约内存)...")
+                try:
+                    doc = fitz.open(self.input_path)
+                    for i in range(len(doc)):
+                        page = doc[i]
+                        # 强制 alpha=False，直接抛弃透明通道，提升性能
+                        pix = page.get_pixmap(alpha=False)
+                        img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.h, pix.w, pix.n)
+                        
+                        if pix.n == 3:
+                            img_cv = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+                        else:
+                            img_cv = cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
 
-                    if pix.n == 3:
-                        img_cv = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
-                    else:
-                        img_cv = cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
-
-                    current_stem = f"{self.base_stem}_page{i + 1}"
-                    page_stems.append(current_stem)
-
-                    self._process_page(img_cv, current_stem, global_start=start, current_page_idx=i + 1)
-            except Exception as e:
-                self.logger.error(f"打开或处理 PDF 失败: {e}")
-                return
-
-        # 处理普通单张图片
-        else:
-            img_cv = cv2.imread(self.input_path)
-            if img_cv is None:
-                self.logger.error(f"读取图片失败: {self.input_path}")
-                return
-
-            page_stems.append(self.base_stem)
-            self._process_page(img_cv, self.base_stem, global_start=start, current_page_idx=1)
+                        current_stem = f"{self.base_stem}_page{i + 1}"
+                        page_stems.append(current_stem)
+                        
+                        self._process_page(img_cv, current_stem, client=client, global_start=start, current_page_idx=i + 1)
+                except Exception as e:
+                    self.logger.error(f"打开或处理 PDF 失败: {e}")
+                    return
+                    
+            # 处理普通单张图片
+            else:
+                img_cv = cv2.imread(self.input_path)
+                if img_cv is None:
+                    self.logger.error(f"读取图片失败: {self.input_path}")
+                    return
+                    
+                page_stems.append(self.base_stem)
+                self._process_page(img_cv, self.base_stem, client=client, global_start=start, current_page_idx=1)
 
         # === 合并多页 Markdown ===
         if len(page_stems) > 1:
@@ -280,6 +287,12 @@ if __name__ == "__main__":
         default="PaddleOCR-Q4_K_M",
         help="VLM model name",
     )
+    parser.add_argument(
+        "--api-key",
+        type=str,
+        default=None,
+        help="Optional API key for the VLM server",
+    )
     args = parser.parse_args()
 
     markdown_ignore_labels = [
@@ -297,6 +310,7 @@ if __name__ == "__main__":
             server_url=args.server_url,
             model_name=args.model_name,
             ignore_labels=markdown_ignore_labels,
+            api_key=args.api_key,
         )
         processor.run()
     except Exception as e:
