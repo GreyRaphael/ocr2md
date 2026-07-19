@@ -207,7 +207,7 @@ class OCR2MDProcessor:
             total_elapsed = time.time() - global_start
             avg_speed = total_elapsed / current_page_idx
             progress_str = f" ({current_page_idx}/{total_pages})" if total_pages else f" ({current_page_idx})"
-            log_msg = f"{progress_str} 完成, 耗时: {page_elapsed:.2f}s, 累计耗时: {total_elapsed:.2f}s, 累计平均速度: {avg_speed:.2f} s/page"
+            log_msg = f"{progress_str}, 耗时: {page_elapsed:.2f}s, 累计耗时: {total_elapsed:.2f}s, 累计平均速度: {avg_speed:.2f} s/page"
         else:
             log_msg = f"[{image_stem}] 完成, 耗时: {page_elapsed:.2f}s"
         log_msg += f", to {output_file}"
@@ -246,7 +246,7 @@ class OCR2MDProcessor:
                         else:
                             img_cv = cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
 
-                        current_stem = f"{self.base_stem}_page{(i + 1):0{pad_len}d}"
+                        current_stem = f"page{(i + 1):0{pad_len}d}"
                         page_stems.append(current_stem)
 
                         self._process_page(img_cv, current_stem, client=client, global_start=start, current_page_idx=i + 1, total_pages=total_pages)
