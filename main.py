@@ -11,6 +11,7 @@ import niquests
 import numpy as np
 from rapid_layout import EngineType, ModelType, RapidLayout, RapidLayoutInput
 
+
 @lru_cache(maxsize=1)
 def get_layout_engine():
     return RapidLayout(
@@ -21,6 +22,7 @@ def get_layout_engine():
             iou_thresh=0.35,
         )
     )
+
 
 PROMPT_MAPPING = {
     "text": "OCR:",
@@ -38,9 +40,9 @@ def crop_to_base64(img_cv, bbox: list) -> str:
     """根据边界框裁剪图片区域，并转换为 base64 格式，供给 VLM 识别"""
     x1, y1, x2, y2 = map(int, bbox)
     cropped = img_cv[y1:y2, x1:x2]
-    _, buffer = cv2.imencode(".png", cropped)
+    _, buffer = cv2.imencode(".jpg", cropped, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
     img_str = base64.b64encode(buffer).decode("utf-8")
-    return f"data:image/png;base64,{img_str}"
+    return f"data:image/jpeg;base64,{img_str}"
 
 
 def save_crop_image(img_cv, bbox: list, save_path: Path):
@@ -54,16 +56,16 @@ def setup_logger(log_file: Path) -> logging.Logger:
     logger = logging.getLogger(log_file.stem)
     logger.setLevel(logging.INFO)
     logger.handlers.clear()
-    
-    fh = logging.FileHandler(log_file, encoding='utf-8')
+
+    fh = logging.FileHandler(log_file, encoding="utf-8")
     fh.setLevel(logging.INFO)
     ch = logging.StreamHandler()
     ch.setLevel(logging.INFO)
-    
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
     fh.setFormatter(formatter)
     ch.setFormatter(formatter)
-    
+
     logger.addHandler(fh)
     logger.addHandler(ch)
     return logger
@@ -97,7 +99,7 @@ def _process_single_image(img_input: Union[str, np.ndarray], image_stem: str, ou
             # === 图表拦截与保存 ===
             if label in ["chart", "figure"]:
                 chart_counter += 1
-                img_name = f"{image_stem}_{label}_{chart_counter}.png"
+                img_name = f"{image_stem}_{label}_{chart_counter}.jpg"
                 img_save_path = imgs_dir / img_name
 
                 save_crop_image(img_cv, box, img_save_path)
@@ -167,20 +169,19 @@ def process_document(input_path: str, server_url: str, model_name: str, ignore_l
     output_dir = Path(f"output_{base_stem}")
     imgs_dir = output_dir / "imgs"
     imgs_dir.mkdir(parents=True, exist_ok=True)
-    
+
     log_file = output_dir / f"{base_stem}.log"
     logger = setup_logger(log_file)
 
     layout_engine = get_layout_engine()
 
-    image_inputs_to_process = []
     if path_obj.suffix.lower() == ".pdf":
         try:
             import fitz
         except ImportError:
             logger.error("处理 PDF 需要安装 pymupdf: uv add pymupdf")
             return
-        logger.info("正在将 PDF 转换为内存图片...")
+        logger.info("正在逐页加载并处理 PDF (节约内存)...")
         try:
             doc = fitz.open(input_path)
             for i in range(len(doc)):
@@ -192,16 +193,14 @@ def process_document(input_path: str, server_url: str, model_name: str, ignore_l
                     img_cv = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
                 else:
                     img_cv = cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
-                
-                image_inputs_to_process.append((img_cv, f"{base_stem}_page{i+1}"))
+
+                current_stem = f"{base_stem}_page{i + 1}"
+                _process_single_image(img_cv, current_stem, output_dir, server_url, model_name, ignore_labels, layout_engine, logger)
         except Exception as e:
             logger.error(f"打开或处理 PDF 失败: {e}")
             return
     else:
-        image_inputs_to_process.append((input_path, base_stem))
-
-    for img_input, current_stem in image_inputs_to_process:
-        _process_single_image(img_input, current_stem, output_dir, server_url, model_name, ignore_labels, layout_engine, logger)
+        _process_single_image(input_path, base_stem, output_dir, server_url, model_name, ignore_labels, layout_engine, logger)
 
     logger.info(f"全部处理完成！总计耗时: {time.time() - start:.2f} 秒")
 
