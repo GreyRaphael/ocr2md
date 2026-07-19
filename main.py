@@ -71,7 +71,18 @@ def setup_logger(log_file: Path) -> logging.Logger:
     return logger
 
 
-def _process_single_image(img_input: Union[str, np.ndarray], image_stem: str, output_dir: Path, server_url: str, model_name: str, ignore_labels: List[str], layout_engine, logger: logging.Logger, global_start: float = None, current_page_idx: int = None):
+def _process_single_image(
+    img_input: Union[str, np.ndarray],
+    image_stem: str,
+    output_dir: Path,
+    server_url: str,
+    model_name: str,
+    ignore_labels: List[str],
+    layout_engine,
+    logger: logging.Logger,
+    global_start: float = None,
+    current_page_idx: int = None,
+):
     page_start = time.time()
     imgs_dir = output_dir / "imgs"
     if isinstance(img_input, str):
@@ -159,7 +170,7 @@ def _process_single_image(img_input: Union[str, np.ndarray], image_stem: str, ou
     output_file = output_dir / f"{image_stem}.md"
     final_markdown = "\n\n".join(markdown_chunks)
     output_file.write_text(final_markdown, encoding="utf-8")
-    
+
     page_elapsed = time.time() - page_start
     log_msg = f"[{image_stem}] 处理完成, 本页耗时: {page_elapsed:.2f}s"
     if global_start is not None and current_page_idx is not None and current_page_idx > 0:
@@ -183,7 +194,7 @@ def process_document(input_path: str, server_url: str, model_name: str, ignore_l
     imgs_dir = output_dir / "imgs"
     imgs_dir.mkdir(parents=True, exist_ok=True)
 
-    log_file = output_dir / f"{base_stem}.log"
+    log_file = output_dir / "ocr2md.log"
     logger = setup_logger(log_file)
 
     layout_engine = get_layout_engine()

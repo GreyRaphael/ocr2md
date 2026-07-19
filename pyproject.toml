@@ -1,9 +1,9 @@
 [project]
-name = "test-paddle"
+name = "ocr2md"
 version = "0.1.0"
 description = "Lightweight OCR: PP-DocLayoutV3 + llama-cpp-server PaddleOCR"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "niquests>=3.20.1",
     "onnxruntime>=1.27.0",
