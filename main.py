@@ -71,7 +71,8 @@ def setup_logger(log_file: Path) -> logging.Logger:
     return logger
 
 
-def _process_single_image(img_input: Union[str, np.ndarray], image_stem: str, output_dir: Path, server_url: str, model_name: str, ignore_labels: List[str], layout_engine, logger: logging.Logger):
+def _process_single_image(img_input: Union[str, np.ndarray], image_stem: str, output_dir: Path, server_url: str, model_name: str, ignore_labels: List[str], layout_engine, logger: logging.Logger, global_start: float = None, current_page_idx: int = None):
+    page_start = time.time()
     imgs_dir = output_dir / "imgs"
     if isinstance(img_input, str):
         img_cv = cv2.imread(img_input)
@@ -158,7 +159,15 @@ def _process_single_image(img_input: Union[str, np.ndarray], image_stem: str, ou
     output_file = output_dir / f"{image_stem}.md"
     final_markdown = "\n\n".join(markdown_chunks)
     output_file.write_text(final_markdown, encoding="utf-8")
-    logger.info(f"[{image_stem}] 处理完成, 结果已保存至 {output_file}")
+    
+    page_elapsed = time.time() - page_start
+    log_msg = f"[{image_stem}] 处理完成, 本页耗时: {page_elapsed:.2f}s"
+    if global_start is not None and current_page_idx is not None and current_page_idx > 0:
+        total_elapsed = time.time() - global_start
+        avg_speed = total_elapsed / current_page_idx
+        log_msg += f", 累计平均速度: {avg_speed:.2f} s/page"
+    log_msg += f", 结果已保存至 {output_file}"
+    logger.info(log_msg)
 
 
 def process_document(input_path: str, server_url: str, model_name: str, ignore_labels: List[str]):
@@ -201,13 +210,13 @@ def process_document(input_path: str, server_url: str, model_name: str, ignore_l
 
                 current_stem = f"{base_stem}_page{i + 1}"
                 page_stems.append(current_stem)
-                _process_single_image(img_cv, current_stem, output_dir, server_url, model_name, ignore_labels, layout_engine, logger)
+                _process_single_image(img_cv, current_stem, output_dir, server_url, model_name, ignore_labels, layout_engine, logger, global_start=start, current_page_idx=i + 1)
         except Exception as e:
             logger.error(f"打开或处理 PDF 失败: {e}")
             return
     else:
         page_stems.append(base_stem)
-        _process_single_image(input_path, base_stem, output_dir, server_url, model_name, ignore_labels, layout_engine, logger)
+        _process_single_image(input_path, base_stem, output_dir, server_url, model_name, ignore_labels, layout_engine, logger, global_start=start, current_page_idx=1)
 
     # === 合并多页 Markdown ===
     if len(page_stems) > 1:
