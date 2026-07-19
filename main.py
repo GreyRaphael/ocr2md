@@ -164,8 +164,12 @@ def _process_single_image(img_input: Union[str, np.ndarray], image_stem: str, ou
 def process_document(input_path: str, server_url: str, model_name: str, ignore_labels: List[str]):
     start = time.time()
     path_obj = Path(input_path)
-    base_stem = path_obj.stem
 
+    if not path_obj.exists() or not path_obj.is_file():
+        print(f"Error: 输入文件不存在或非文件: {input_path}")
+        return
+
+    base_stem = path_obj.stem
     output_dir = Path(f"output_{base_stem}")
     imgs_dir = output_dir / "imgs"
     imgs_dir.mkdir(parents=True, exist_ok=True)
@@ -175,6 +179,7 @@ def process_document(input_path: str, server_url: str, model_name: str, ignore_l
 
     layout_engine = get_layout_engine()
 
+    page_stems = []
     if path_obj.suffix.lower() == ".pdf":
         try:
             import fitz
@@ -195,12 +200,27 @@ def process_document(input_path: str, server_url: str, model_name: str, ignore_l
                     img_cv = cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
 
                 current_stem = f"{base_stem}_page{i + 1}"
+                page_stems.append(current_stem)
                 _process_single_image(img_cv, current_stem, output_dir, server_url, model_name, ignore_labels, layout_engine, logger)
         except Exception as e:
             logger.error(f"打开或处理 PDF 失败: {e}")
             return
     else:
+        page_stems.append(base_stem)
         _process_single_image(input_path, base_stem, output_dir, server_url, model_name, ignore_labels, layout_engine, logger)
+
+    # === 合并多页 Markdown ===
+    if len(page_stems) > 1:
+        combined_md_path = output_dir / f"{base_stem}_full.md"
+        combined_content = []
+        for stem in page_stems:
+            page_md = output_dir / f"{stem}.md"
+            if page_md.exists():
+                combined_content.append(page_md.read_text(encoding="utf-8"))
+
+        if combined_content:
+            combined_md_path.write_text("\n\n---\n\n".join(combined_content), encoding="utf-8")
+            logger.info(f"多页 Markdown 已合并至: {combined_md_path}")
 
     logger.info(f"全部处理完成！总计耗时: {time.time() - start:.2f} 秒")
 
