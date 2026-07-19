@@ -9,10 +9,10 @@ rapid2:
 - fupeng: 35.3s, good
 - footnote: 10.55, good
 - formula: 12.1s, good
-- table: 15.5s, bad format
+- table: 15.5s, good
 - hand: 14.5s, good
 
-rapid2:
+rapid:
 - fupeng: 32.82, good
 - footnote: 4.63s, bad $$
 - formula: 8.94s, good
@@ -25,3 +25,10 @@ main
 - formula: 9.16s, good minor
 - table: 11.27s, bad format
 - hand: 11.23s, bad bracket
+
+rapid2(glm):
+- fupeng: 
+- footnote: 
+- formula: 
+- table: 
+- hand: 13s, good

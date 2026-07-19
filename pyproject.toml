@@ -5,11 +5,7 @@ description = "Lightweight OCR: PP-DocLayoutV3 + llama-cpp-server PaddleOCR"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "httpx[socks]>=0.28.1",
-    "nopaddle[onnx]>=0.1.0",
-    "pymupdf>=1.24",
+    "niquests>=3.20.1",
+    "onnxruntime>=1.27.0",
     "rapid-layout>=1.2.1",
-    "paddleocr[doc-parser]>=3.7.0",
-    "paddlepaddle>=3.3.1",
-    "paddlex[ocr]>=3.7.2",
 ]
