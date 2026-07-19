@@ -172,6 +172,13 @@ class OCR2MDProcessor:
                 markdown_chunks.append(item[1])
             elif item[0] == "vlm":
                 _, label, response = item
+                
+                # 致命错误：遭遇鉴权失败时，立即抛出异常中断整个进程，避免继续发送无效请求
+                if response.status_code == 401:
+                    error_msg = f"鉴权失败 (401 Unauthorized)，请检查 API Key: {response.text}"
+                    self.logger.error(error_msg)
+                    raise PermissionError(error_msg)
+
                 try:
                     if not response.ok:
                         self.logger.error(f"Server Error: {response.text}")
@@ -236,6 +243,9 @@ class OCR2MDProcessor:
                         page_stems.append(current_stem)
                         
                         self._process_page(img_cv, current_stem, client=client, global_start=start, current_page_idx=i + 1)
+                except PermissionError:
+                    # 将鉴权错误等致命错误直接向上抛出，中断运行
+                    raise
                 except Exception as e:
                     self.logger.error(f"打开或处理 PDF 失败: {e}")
                     return
