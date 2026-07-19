@@ -1,6 +1,7 @@
 import base64
 import io
 import time
+import argparse
 from pathlib import Path
 import httpx
 from PIL import Image
@@ -40,7 +41,7 @@ def process_document(
     image_stem = Path(image_path).stem
 
     # 定义输出目录结构
-    output_dir = Path("./output")
+    output_dir = Path("./output_rapid")
     imgs_dir = output_dir / "imgs"
     imgs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -134,6 +135,16 @@ def process_document(
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run rapid document processing")
+    parser.add_argument(
+        "input",
+        nargs="?",
+        type=str,
+        default="input/formula-handwritten.webp",
+        help="Path to the input image or pdf",
+    )
+    args = parser.parse_args()
+
     # ⚠️ 特别注意：这里千万不要包含 "chart" 和 "figure"，否则它们会被提前过滤掉
     markdown_ignore_labels = [
         "number",
@@ -145,10 +156,7 @@ if __name__ == "__main__":
     ]
 
     process_document(
-        # image_path="input/fupeng3_1.png",
-        # image_path="input/test_footnote.png",
-        # image_path="input/test_formula.jpg",
-        image_path="input/formula-handwritten.webp",
+        image_path=args.input,
         server_url="http://172.31.80.1:8080/v1",
         model_name="PaddleOCR-Q4_K_M",
         ignore_labels=markdown_ignore_labels,

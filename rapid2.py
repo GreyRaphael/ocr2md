@@ -1,6 +1,7 @@
 import base64
 import io
 import time
+import argparse
 from pathlib import Path
 import httpx
 from PIL import Image
@@ -69,7 +70,7 @@ def process_document(
     start = time.time()
     image_stem = Path(image_path).stem
 
-    output_dir = Path("./output")
+    output_dir = Path("./output_rapid2")
     imgs_dir = output_dir / "imgs"
     imgs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -165,6 +166,16 @@ def process_document(
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run rapid2 document processing")
+    parser.add_argument(
+        "input",
+        nargs="?",
+        type=str,
+        default="input/formula-handwritten.webp",
+        help="Path to the input image or pdf",
+    )
+    args = parser.parse_args()
+
     markdown_ignore_labels = [
         "number",
         "header",
@@ -175,8 +186,7 @@ if __name__ == "__main__":
     ]
 
     process_document(
-        # image_path="input/fupeng3_1.png",
-        image_path="input/formula-handwritten.webp",
+        image_path=args.input,
         server_url="http://172.31.80.1:8080/v1",
         model_name="PaddleOCR-Q4_K_M",
         # model_name="GLMOCR-Q4_K_M",
