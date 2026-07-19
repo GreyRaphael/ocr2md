@@ -29,7 +29,7 @@ class OCR2MDProcessor:
     轻量级 OCR 转 Markdown 处理器。
     结合了 PP-DocLayoutV3 的本地极速版面分析与远端大模型 (如 llama.cpp) 的并发 OCR 能力。
     """
-    
+
     # 针对不同排版元素的专用提示词映射
     PROMPT_MAPPING = {
         "text": "OCR:",
@@ -49,19 +49,19 @@ class OCR2MDProcessor:
         self.model_name = model_name
         self.ignore_labels = ignore_labels
         self.api_key = api_key
-        
+
         # 路径与目录初始化
         self.path_obj = Path(input_path)
         self.base_stem = self.path_obj.stem
         self.output_dir = Path(f"output_{self.base_stem}")
         self.imgs_dir = self.output_dir / "imgs"
-        
+
         # 提前检查文件是否存在以避免生成空目录
         if not self.path_obj.exists() or not self.path_obj.is_file():
             raise FileNotFoundError(f"输入文件不存在或非文件: {input_path}")
-            
+
         self.imgs_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # 初始化日志和版面分析模型
         self.logger = self._setup_logger()
         self.layout_engine = get_layout_engine()
@@ -122,7 +122,7 @@ class OCR2MDProcessor:
             "top_k": 1,
         }
 
-    def _process_page(self, img_cv: np.ndarray, image_stem: str, client: niquests.Session, global_start: float = None, current_page_idx: int = None):
+    def _process_page(self, img_cv: np.ndarray, image_stem: str, client: niquests.Session, global_start: float = None, current_page_idx: int = None, total_pages: int = None):
         """处理单一页面：版面分析 -> 切割图表保存 -> 并发 OCR 识别 -> 生成 Markdown"""
         page_start = time.time()
 
@@ -148,12 +148,12 @@ class OCR2MDProcessor:
 
                 self._save_crop_image(img_cv, box, img_save_path)
                 items_to_process.append(("chart", f"![{label}](imgs/{img_name})"))
-                self.logger.info(f"已成功提取图表并保存至: {img_save_path}")
+                self.logger.info(f"提取图表并保存至: {img_save_path}")
                 continue
 
             # 其他文本/表格/公式区块，并发丢给大模型
             payload = self._build_vlm_payload(img_cv, box, label)
-            
+
             headers = {}
             if self.api_key:
                 headers["Authorization"] = f"Bearer {self.api_key}"
@@ -172,10 +172,10 @@ class OCR2MDProcessor:
                 markdown_chunks.append(item[1])
             elif item[0] == "vlm":
                 _, label, response = item
-                
+
                 # 致命错误：遭遇鉴权失败时，立即抛出异常中断整个进程，避免继续发送无效请求
                 if response.status_code == 401:
-                    error_msg = f"鉴权失败 (401 Unauthorized)，请检查 API Key: {response.text}"
+                    error_msg = f"401 Unauthorized, 检查 API Key: {response.text}"
                     self.logger.error(error_msg)
                     raise PermissionError(error_msg)
 
@@ -200,12 +200,14 @@ class OCR2MDProcessor:
         output_file.write_text(final_markdown, encoding="utf-8")
 
         page_elapsed = time.time() - page_start
-        log_msg = f"[{image_stem}] 处理完成, 本页耗时: {page_elapsed:.2f}s"
         if global_start is not None and current_page_idx is not None and current_page_idx > 0:
             total_elapsed = time.time() - global_start
             avg_speed = total_elapsed / current_page_idx
-            log_msg += f", 累计平均速度: {avg_speed:.2f} s/page"
-        log_msg += f", 结果已保存至 {output_file}"
+            progress_str = f" ({current_page_idx}/{total_pages})" if total_pages else f" ({current_page_idx})"
+            log_msg = f"{progress_str} 完成, 耗时: {page_elapsed:.2f}s, 累计耗时: {total_elapsed:.2f}s, 累计平均速度: {avg_speed:.2f} s/page"
+        else:
+            log_msg = f"[{image_stem}] 完成, 耗时: {page_elapsed:.2f}s"
+        log_msg += f", to {output_file}"
         self.logger.info(log_msg)
 
     def run(self):
@@ -224,16 +226,17 @@ class OCR2MDProcessor:
                 except ImportError:
                     self.logger.error("处理 PDF 需要安装 pymupdf: uv add pymupdf")
                     return
-                    
-                self.logger.info("正在逐页加载并处理 PDF (节约内存)...")
+
+                self.logger.info("正在逐页加载并处理 PDF...")
                 try:
                     doc = fitz.open(self.input_path)
-                    for i in range(len(doc)):
+                    total_pages = len(doc)
+                    for i in range(total_pages):
                         page = doc[i]
                         # 强制 alpha=False，直接抛弃透明通道，提升性能
                         pix = page.get_pixmap(alpha=False)
                         img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.h, pix.w, pix.n)
-                        
+
                         if pix.n == 3:
                             img_cv = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
                         else:
@@ -241,22 +244,22 @@ class OCR2MDProcessor:
 
                         current_stem = f"{self.base_stem}_page{i + 1}"
                         page_stems.append(current_stem)
-                        
-                        self._process_page(img_cv, current_stem, client=client, global_start=start, current_page_idx=i + 1)
+
+                        self._process_page(img_cv, current_stem, client=client, global_start=start, current_page_idx=i + 1, total_pages=total_pages)
                 except PermissionError:
                     # 将鉴权错误等致命错误直接向上抛出，中断运行
                     raise
                 except Exception as e:
                     self.logger.error(f"打开或处理 PDF 失败: {e}")
                     return
-                    
+
             # 处理普通单张图片
             else:
                 img_cv = cv2.imread(self.input_path)
                 if img_cv is None:
                     self.logger.error(f"读取图片失败: {self.input_path}")
                     return
-                    
+
                 page_stems.append(self.base_stem)
                 self._process_page(img_cv, self.base_stem, client=client, global_start=start, current_page_idx=1)
 
@@ -273,7 +276,7 @@ class OCR2MDProcessor:
                 combined_md_path.write_text("\n\n---\n\n".join(combined_content), encoding="utf-8")
                 self.logger.info(f"多页 Markdown 已合并至: {combined_md_path}")
 
-        self.logger.info(f"全部处理完成！总计耗时: {time.time() - start:.2f} 秒")
+        self.logger.info(f"全部完成！总计耗时: {time.time() - start:.2f} 秒")
 
 
 if __name__ == "__main__":
