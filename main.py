@@ -231,6 +231,7 @@ class OCR2MDProcessor:
                 try:
                     doc = fitz.open(self.input_path)
                     total_pages = len(doc)
+                    pad_len = len(str(total_pages))
                     for i in range(total_pages):
                         page = doc[i]
                         # 强制 alpha=False，直接抛弃透明通道，提升性能
@@ -242,7 +243,7 @@ class OCR2MDProcessor:
                         else:
                             img_cv = cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
 
-                        current_stem = f"{self.base_stem}_page{i + 1}"
+                        current_stem = f"{self.base_stem}_page{(i + 1):0{pad_len}d}"
                         page_stems.append(current_stem)
 
                         self._process_page(img_cv, current_stem, client=client, global_start=start, current_page_idx=i + 1, total_pages=total_pages)
