@@ -1,22 +1,26 @@
 import base64
 import time
 import argparse
+import logging
 from pathlib import Path
-from typing import List
+from typing import List, Union
+from functools import lru_cache
 
 import cv2
 import niquests
+import numpy as np
 from rapid_layout import EngineType, ModelType, RapidLayout, RapidLayoutInput
 
-# 1. 初始化 PP-DocLayoutV3 模型
-layout_engine = RapidLayout(
-    cfg=RapidLayoutInput(
-        model_type=ModelType.PP_DOC_LAYOUTV3,
-        engine_type=EngineType.ONNXRUNTIME,
-        conf_thresh=0.35,
-        iou_thresh=0.35,
+@lru_cache(maxsize=1)
+def get_layout_engine():
+    return RapidLayout(
+        cfg=RapidLayoutInput(
+            model_type=ModelType.PP_DOC_LAYOUTV3,
+            engine_type=EngineType.ONNXRUNTIME,
+            conf_thresh=0.35,
+            iou_thresh=0.35,
+        )
     )
-)
 
 PROMPT_MAPPING = {
     "text": "OCR:",
@@ -46,22 +50,38 @@ def save_crop_image(img_cv, bbox: list, save_path: Path):
     cv2.imwrite(str(save_path), cropped)
 
 
-def process_document(image_path: str, server_url: str, model_name: str, ignore_labels: List[str]):
-    start = time.time()
-    image_stem = Path(image_path).stem
+def setup_logger(log_file: Path) -> logging.Logger:
+    logger = logging.getLogger(log_file.stem)
+    logger.setLevel(logging.INFO)
+    logger.handlers.clear()
+    
+    fh = logging.FileHandler(log_file, encoding='utf-8')
+    fh.setLevel(logging.INFO)
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO)
+    
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    fh.setFormatter(formatter)
+    ch.setFormatter(formatter)
+    
+    logger.addHandler(fh)
+    logger.addHandler(ch)
+    return logger
 
-    output_dir = Path(f"output_{image_stem}")
+
+def _process_single_image(img_input: Union[str, np.ndarray], image_stem: str, output_dir: Path, server_url: str, model_name: str, ignore_labels: List[str], layout_engine, logger: logging.Logger):
     imgs_dir = output_dir / "imgs"
-    imgs_dir.mkdir(parents=True, exist_ok=True)
+    if isinstance(img_input, str):
+        img_cv = cv2.imread(img_input)
+        if img_cv is None:
+            logger.error(f"读取图片失败: {img_input}")
+            return
+    else:
+        img_cv = img_input
 
-    img_cv = cv2.imread(image_path)
-    if img_cv is None:
-        print(f"读取图片失败: {image_path}")
-        return
-
-    results = layout_engine(image_path)
+    results = layout_engine(img_cv)
     if results.boxes is None:
-        print(f"{image_path}: 未检测到任何版面元素")
+        logger.warning(f"[{image_stem}] 未检测到任何版面元素")
         return
 
     items_to_process = []
@@ -82,7 +102,7 @@ def process_document(image_path: str, server_url: str, model_name: str, ignore_l
 
                 save_crop_image(img_cv, box, img_save_path)
                 items_to_process.append(("chart", f"![{label}](imgs/{img_name})"))
-                print(f"已成功提取图表并保存至: {img_save_path}")
+                logger.info(f"已成功提取图表并保存至: {img_save_path}")
                 continue
 
             # === 文本/表格/公式调用 VLM 识别 ===
@@ -120,7 +140,7 @@ def process_document(image_path: str, server_url: str, model_name: str, ignore_l
             _, label, response = item
             try:
                 if not response.ok:
-                    print(f"Server Error: {response.text}")
+                    logger.error(f"Server Error: {response.text}")
                 response.raise_for_status()
                 content = response.json()["choices"][0]["message"]["content"].strip()
                 if not content:
@@ -131,23 +151,81 @@ def process_document(image_path: str, server_url: str, model_name: str, ignore_l
                 else:
                     markdown_chunks.append(content)
             except Exception as e:
-                print(f"处理区块 [{label}] 失败: {e}")
+                logger.error(f"处理区块 [{label}] 失败: {e}")
 
     output_file = output_dir / f"{image_stem}.md"
     final_markdown = "\n\n".join(markdown_chunks)
     output_file.write_text(final_markdown, encoding="utf-8")
+    logger.info(f"[{image_stem}] 处理完成, 结果已保存至 {output_file}")
 
-    print(f"全部处理完成！总计耗时: {time.time() - start:.2f} 秒")
+
+def process_document(input_path: str, server_url: str, model_name: str, ignore_labels: List[str]):
+    start = time.time()
+    path_obj = Path(input_path)
+    base_stem = path_obj.stem
+
+    output_dir = Path(f"output_{base_stem}")
+    imgs_dir = output_dir / "imgs"
+    imgs_dir.mkdir(parents=True, exist_ok=True)
+    
+    log_file = output_dir / f"{base_stem}.log"
+    logger = setup_logger(log_file)
+
+    layout_engine = get_layout_engine()
+
+    image_inputs_to_process = []
+    if path_obj.suffix.lower() == ".pdf":
+        try:
+            import fitz
+        except ImportError:
+            logger.error("处理 PDF 需要安装 pymupdf: uv add pymupdf")
+            return
+        logger.info("正在将 PDF 转换为内存图片...")
+        try:
+            doc = fitz.open(input_path)
+            for i in range(len(doc)):
+                page = doc[i]
+                # 强制 alpha=False 丢弃透明通道，保持默认大小以提升处理速度，并在内存中处理
+                pix = page.get_pixmap(alpha=False)
+                img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.h, pix.w, pix.n)
+                if pix.n == 3:
+                    img_cv = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+                else:
+                    img_cv = cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
+                
+                image_inputs_to_process.append((img_cv, f"{base_stem}_page{i+1}"))
+        except Exception as e:
+            logger.error(f"打开或处理 PDF 失败: {e}")
+            return
+    else:
+        image_inputs_to_process.append((input_path, base_stem))
+
+    for img_input, current_stem in image_inputs_to_process:
+        _process_single_image(img_input, current_stem, output_dir, server_url, model_name, ignore_labels, layout_engine, logger)
+
+    logger.info(f"全部处理完成！总计耗时: {time.time() - start:.2f} 秒")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run rapid2 document processing")
+    parser = argparse.ArgumentParser(description="Run document processing")
     parser.add_argument(
         "input",
         nargs="?",
         type=str,
         default="input/formula-handwritten.webp",
         help="Path to the input image or pdf",
+    )
+    parser.add_argument(
+        "--server-url",
+        type=str,
+        default="http://172.31.80.1:8080/v1",
+        help="VLM server url",
+    )
+    parser.add_argument(
+        "--model-name",
+        type=str,
+        default="PaddleOCR-Q4_K_M",
+        help="VLM model name",
     )
     args = parser.parse_args()
 
@@ -161,8 +239,8 @@ if __name__ == "__main__":
     ]
 
     process_document(
-        image_path=args.input,
-        server_url="http://172.31.80.1:8080/v1",
-        model_name="PaddleOCR-Q4_K_M",
+        input_path=args.input,
+        server_url=args.server_url,
+        model_name=args.model_name,
         ignore_labels=markdown_ignore_labels,
     )
