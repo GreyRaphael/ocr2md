@@ -236,6 +236,14 @@ class OCR2MDProcessor:
                     total_pages = len(doc)
                     pad_len = len(str(total_pages))
                     for i in range(total_pages):
+                        current_stem = f"page{(i + 1):0{pad_len}d}"
+                        page_stems.append(current_stem)
+                        
+                        expected_md = self.output_dir / f"{current_stem}.md"
+                        if expected_md.exists():
+                            self.logger.info(f"[{current_stem}] 已存在，跳过处理 (断点续传)")
+                            continue
+
                         page = doc[i]
                         # 强制 alpha=False，直接抛弃透明通道，提升性能
                         pix = page.get_pixmap(alpha=False)
@@ -245,9 +253,6 @@ class OCR2MDProcessor:
                             img_cv = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
                         else:
                             img_cv = cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
-
-                        current_stem = f"page{(i + 1):0{pad_len}d}"
-                        page_stems.append(current_stem)
 
                         self._process_page(img_cv, current_stem, client=client, global_start=start, current_page_idx=i + 1, total_pages=total_pages)
                 except PermissionError:
