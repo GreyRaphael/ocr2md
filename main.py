@@ -40,6 +40,7 @@ class OCR2MDProcessor:
         "display_formula": "Formula Recognition:",
         "inline_formula": "Formula Recognition:",
         "seal": "Seal Recognition:",
+        "algorithm": "Convert this algorithm into a Markdown code block, strictly preserving indentation:",
     }
 
     def __init__(self, input_path: str, server_url: str, model_name: str, ignore_labels: list[str], api_key: str = None):
@@ -189,6 +190,8 @@ class OCR2MDProcessor:
 
                     if label in ["doc_title", "paragraph_title"]:
                         markdown_chunks.append(f"## {content}")
+                    elif label in ["footnote", "vision_footnote"]:
+                        markdown_chunks.append(f"> [脚注]: {content}")
                     else:
                         markdown_chunks.append(content)
                 except Exception as e:
