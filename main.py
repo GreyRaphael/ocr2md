@@ -149,7 +149,7 @@ class OCR2MDProcessor:
 
                 self._save_crop_image(img_cv, box, img_save_path)
                 items_to_process.append(("chart", f"![{label}](imgs/{img_name})"))
-                self.logger.info(f"提取图表并保存至: {img_save_path}")
+                self.logger.info(f"提取插图到: {img_save_path}")
                 continue
 
             # 其他文本/表格/公式区块，并发丢给大模型
@@ -210,7 +210,7 @@ class OCR2MDProcessor:
             log_msg = f"{progress_str}, 耗时: {page_elapsed:.2f}s, 累计耗时: {total_elapsed:.2f}s, 累计平均速度: {avg_speed:.2f} s/page"
         else:
             log_msg = f"[{image_stem}] 完成, 耗时: {page_elapsed:.2f}s"
-        log_msg += f", to {output_file}"
+        log_msg += f", {output_file}"
         self.logger.info(log_msg)
 
     def run(self):
@@ -238,7 +238,7 @@ class OCR2MDProcessor:
                     for i in range(total_pages):
                         current_stem = f"page{(i + 1):0{pad_len}d}"
                         page_stems.append(current_stem)
-                        
+
                         expected_md = self.output_dir / f"{current_stem}.md"
                         if expected_md.exists():
                             self.logger.info(f"[{current_stem}] 已存在，跳过处理 (断点续传)")
