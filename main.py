@@ -123,7 +123,9 @@ class OCR2MDProcessor:
             "top_k": 1,
         }
 
-    def _process_page(self, img_cv: np.ndarray, image_stem: str, client: niquests.Session, global_start: float = None, current_page_idx: int = None, total_pages: int = None):
+    def _process_page(
+        self, img_cv: np.ndarray, image_stem: str, client: niquests.Session, global_start: float = None, current_page_idx: int = None, total_pages: int = None, processed_pages_count: int = None
+    ):
         """处理单一页面：版面分析 -> 切割图表保存 -> 并发 OCR 识别 -> 生成 Markdown"""
         page_start = time.time()
 
@@ -203,9 +205,12 @@ class OCR2MDProcessor:
         output_file.write_text(final_markdown, encoding="utf-8")
 
         page_elapsed = time.time() - page_start
-        if global_start is not None and current_page_idx is not None and current_page_idx > 0:
+
+        stats_count = processed_pages_count if processed_pages_count is not None else current_page_idx
+
+        if global_start is not None and stats_count is not None and stats_count > 0:
             total_elapsed = time.time() - global_start
-            avg_speed = total_elapsed / current_page_idx
+            avg_speed = total_elapsed / stats_count
             progress_str = f" ({current_page_idx}/{total_pages})" if total_pages else f" ({current_page_idx})"
             log_msg = f"{progress_str}, 耗时: {page_elapsed:.2f}s, 累计耗时: {total_elapsed:.2f}s, 累计平均速度: {avg_speed:.2f} s/page"
         else:
@@ -235,6 +240,7 @@ class OCR2MDProcessor:
                     doc = fitz.open(self.input_path)
                     total_pages = len(doc)
                     pad_len = len(str(total_pages))
+                    processed_count = 0
                     for i in range(total_pages):
                         current_stem = f"page{(i + 1):0{pad_len}d}"
                         page_stems.append(current_stem)
@@ -243,6 +249,8 @@ class OCR2MDProcessor:
                         if expected_md.exists():
                             self.logger.info(f"[{current_stem}] 已存在，跳过处理 (断点续传)")
                             continue
+
+                        processed_count += 1
 
                         page = doc[i]
                         # 强制 alpha=False，直接抛弃透明通道，提升性能
@@ -254,7 +262,7 @@ class OCR2MDProcessor:
                         else:
                             img_cv = cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
 
-                        self._process_page(img_cv, current_stem, client=client, global_start=start, current_page_idx=i + 1, total_pages=total_pages)
+                        self._process_page(img_cv, current_stem, client=client, global_start=start, current_page_idx=i + 1, total_pages=total_pages, processed_pages_count=processed_count)
                 except PermissionError:
                     # 将鉴权错误等致命错误直接向上抛出，中断运行
                     raise
